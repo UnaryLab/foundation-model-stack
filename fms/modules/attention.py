@@ -13,6 +13,7 @@ from typing import (
 from typing_extensions import NotRequired, Unpack
 
 import torch
+from torch.profiler import record_function
 import torch.distributed
 from torch import Tensor, nn
 from torch.distributed.distributed_c10d import ProcessGroup
@@ -199,29 +200,31 @@ def _sdpa_compute_op(
     queries = query.transpose(2, 1)
 
     # no longer transposing prior to store, so need to check this in case of no cache
-    if key_cache.shape[1] != kvheads and key_cache.shape[2] == kvheads:
-        key_cache = key_cache.transpose(2, 1)
-        value_cache = value_cache.transpose(2, 1)
-    mask = attn_kwargs.get("mask", None)
+    with record_function("attn_kvt"):
+        if key_cache.shape[1] != kvheads and key_cache.shape[2] == kvheads:
+            key_cache = key_cache.transpose(2, 1)
+            value_cache = value_cache.transpose(2, 1)
+        mask = attn_kwargs.get("mask", None)
 
-    # TODO: Once we add alibi support, merge rel pos bias and mask into single float mask
-    if mask is not None:
-        # Our expected mask format is bs x q_len x k_len, so to make it broadcastable
-        # we need to create the nheads dimension
-        while len(mask.size()) != 4:  # expects bs (x nheads) x q_len x kv_len
-            mask = mask.unsqueeze(1)
+        # TODO: Once we add alibi support, merge rel pos bias and mask into single float mask
+        if mask is not None:
+            # Our expected mask format is bs x q_len x k_len, so to make it broadcastable
+            # we need to create the nheads dimension
+            while len(mask.size()) != 4:  # expects bs (x nheads) x q_len x kv_len
+                mask = mask.unsqueeze(1)
 
     # Expand kv so black-box attn will work
     expansion = nheads // kvheads
     # k/v: b h l d
-    if expansion != 1:
-        keys_e = key_cache.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
-        values_e = (
-            value_cache.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
-        )
-    else:
-        keys_e = key_cache
-        values_e = value_cache
+    with record_function("attn_c"):
+        if expansion != 1:
+            keys_e = key_cache.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            values_e = (
+                value_cache.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
+            )
+        else:
+            keys_e = key_cache
+            values_e = value_cache
 
     attn_algorithm = attn_kwargs.get("attn_algorithm", None)
     if attn_algorithm:
@@ -244,15 +247,16 @@ def _sdpa_compute_op(
     )
 
     # TODO: when updating to 2.7, use enable_gqa and stop using keys_e and values_e
-    attn = F.scaled_dot_product_attention(
-        queries,
-        keys_e,
-        values_e,
-        attn_mask=attn_mask,
-        dropout_p=p_dropout,
-        is_causal=is_causal,
-        scale=scale_factor,
-    )
+    with record_function("attn_sdpa"):
+        attn = F.scaled_dot_product_attention(
+            queries,
+            keys_e,
+            values_e,
+            attn_mask=attn_mask,
+            dropout_p=p_dropout,
+            is_causal=is_causal,
+            scale=scale_factor,
+        )
 
     if attn_algorithm:
         torch.backends.cuda.enable_flash_sdp(__sdpa_previous_flash)
@@ -263,7 +267,8 @@ def _sdpa_compute_op(
     # attn: b x h x qlen x ds
     # attn after permute: b x qlen x h x ds
     # b x qlen x (d)
-    attn = attn.transpose(2, 1).contiguous()
+    with record_function("attn_ot"):
+        attn = attn.transpose(2, 1).contiguous()
     return attn
 
 
@@ -276,15 +281,16 @@ def _sdpa_update_attn_kwargs(
         # get the last row of the 3d mask
         mask = mask[:, -1:, :]
         # extend the mask one slot
-        mask = torch.cat(
-            (
-                mask,
-                torch.zeros(mask.size(0), 1, 1, device=mask.device),
-            ),
-            dim=2,
-        )
-        if torch._dynamo.config.dynamic_shapes:
-            torch._dynamo.mark_dynamic(mask, 2)
+        with record_function("attn_mask"):
+            mask = torch.cat(
+                (
+                    mask,
+                    torch.zeros(mask.size(0), 1, 1, device=mask.device),
+                ),
+                dim=2,
+            )
+            if torch._dynamo.config.dynamic_shapes:
+                torch._dynamo.mark_dynamic(mask, 2)
 
         attn_kwargs["mask"] = mask
     return attn_kwargs
@@ -440,9 +446,12 @@ class UnfusedQKV(QKV):
             )
 
         # b x h x qlen x ds
-        queries = self.query(q)
-        keys = self.key(k)
-        values = self.value(v)
+        with record_function("attn_uf_qp"):
+            queries = self.query(q)
+        with record_function("attn_uf_kp"):
+            keys = self.key(k)
+        with record_function("attn_uf_vp"):
+            values = self.value(v)
         return queries, keys, values
 
 
@@ -488,26 +497,27 @@ class FusedQKV(QKV):
         )
 
     def unfuse_weights(self):
-        with torch.device("meta"):
-            result = UnfusedQKV(
-                self.emb_dim,
-                self.nheads,
-                self.kvheads,
-                self.emb_kq_per_head,
-                self.emb_v_per_head,
-                self.use_bias,
-            )
-        query, key, value = torch.split(self.qkv_fused.weight, self.splits, dim=0)
-        result.query.weight = torch.nn.Parameter(query)
-        result.key.weight = torch.nn.Parameter(key)
-        result.value.weight = torch.nn.Parameter(value)
-        if self.use_bias:
-            query_bias, key_bias, value_bias = torch.split(
-                self.qkv_fused.bias, self.splits, dim=0
-            )
-            result.query.bias = torch.nn.Parameter(query_bias)
-            result.key.bias = torch.nn.Parameter(key_bias)
-            result.value.bias = torch.nn.Parameter(value_bias)
+        with record_function("attn_unfuse"):
+            with torch.device("meta"):
+                result = UnfusedQKV(
+                    self.emb_dim,
+                    self.nheads,
+                    self.kvheads,
+                    self.emb_kq_per_head,
+                    self.emb_v_per_head,
+                    self.use_bias,
+                )
+            query, key, value = torch.split(self.qkv_fused.weight, self.splits, dim=0)
+            result.query.weight = torch.nn.Parameter(query)
+            result.key.weight = torch.nn.Parameter(key)
+            result.value.weight = torch.nn.Parameter(value)
+            if self.use_bias:
+                query_bias, key_bias, value_bias = torch.split(
+                    self.qkv_fused.bias, self.splits, dim=0
+                )
+                result.query.bias = torch.nn.Parameter(query_bias)
+                result.key.bias = torch.nn.Parameter(key_bias)
+                result.value.bias = torch.nn.Parameter(value_bias)
         return result
 
     def reset_parameters(self):
@@ -525,7 +535,8 @@ class FusedQKV(QKV):
             qkv = q
         else:
             raise ValueError("q, k, and v must be the same or k and v must be None")
-        return self.qkv_fused(qkv).split(self.splits, dim=-1)
+        with record_function("attn_qkv_ip"):
+            return self.qkv_fused(qkv).split(self.splits, dim=-1)
 
 
 class MultiHeadAttention(nn.Module):

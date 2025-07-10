@@ -6,6 +6,7 @@ from typing_extensions import Unpack
 
 import torch
 import torch.nn as nn
+from torch.profiler import record_function
 
 from fms import models
 from fms.distributed.strategy import (
@@ -135,14 +136,16 @@ class LLaMABlock(nn.Module):
 
         # first we do MHA and Add&Norm
         residual = x
-        x = self.ln(x)
-        x = self.attn(
-            q=x,
-            position_ids=position_ids,
-            past_key_value_state=self_attn_past_key_value,
-            use_cache=use_cache,
-            **attn_kwargs,
-        )
+        with record_function("attn_n"):
+            x = self.ln(x)
+        with record_function("attn_attn"):
+            x = self.attn(
+                q=x,
+                position_ids=position_ids,
+                past_key_value_state=self_attn_past_key_value,
+                use_cache=use_cache,
+                **attn_kwargs,
+            )
         cache = None
         if use_cache:
             x, cache = x
@@ -347,7 +350,8 @@ class LLaMA(nn.Module):
         # bias: nheads x seq_len x seq_len
         if past_key_value_states is None or len(past_key_value_states) == 0:
             past_key_value_states = [None for _ in range(len(self.layers))]
-        x_in = self.shared(x_in)
+        with record_function("ie"):
+            x_in = self.shared(x_in)
 
         # this is the output cache for all the decoder layers
         present_key_value_states = []
@@ -369,9 +373,11 @@ class LLaMA(nn.Module):
                 x_in = output
 
         dec_out = x_in
-        dec_out = self.dec_norm(dec_out)
+        with record_function("ln"):
+            dec_out = self.dec_norm(dec_out)
         if self.config.p_dropout:
-            dec_out = self.dropout(dec_out)
+            with record_function("do"):
+                dec_out = self.dropout(dec_out)
 
         return dec_out, present_key_value_states
 

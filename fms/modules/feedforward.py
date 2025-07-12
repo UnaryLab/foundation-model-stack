@@ -5,6 +5,7 @@ import torch.distributed
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributed.distributed_c10d import ProcessGroup
+from torch.profiler import record_function
 
 import fms.triton.pytorch_ops as triton_ops  # registers the PT custom ops
 from fms import distributed
@@ -287,14 +288,29 @@ class GatedLinearUnit(nn.Module):
 
     def forward(self, x):
         if self.fused:
-            out_fused = self.wg1_fused(x)
-            wg, w1 = torch.split(out_fused, [self.hidden_dim, self.hidden_dim], dim=2)
-            out = self.a(wg) * w1
+            with record_function('ff_gup'):
+                out_fused = self.wg1_fused(x)
+            with record_function('ff_split'):
+                wg, w1 = torch.split(out_fused, [self.hidden_dim, self.hidden_dim], dim=2)
+            with record_function('ff_ga'):
+                out = self.a(wg)
+            with record_function('ff_gu'):
+                out = out * w1
         else:
-            out = self.a(self.wg(x)) * self.w1(x)
+            with record_function('ff_gp'):
+                wg = self.wg(x)
+            with record_function('ff_ga'):
+                out = self.a(wg)
+            with record_function('ff_up'):
+                w1 = self.w1(x)
+            with record_function('ff_gu'):
+                out = out * w1
         if self.p_dropout:
-            out = self.d(out)
-        return self.w2(out)
+            with record_function('ff_sdo'):
+                out = self.d(out)
+        with record_function('ff_dp'):
+            out = self.w2(out)
+        return out
 
     def _initialize_empty_module(self):
         with torch.device("meta"):

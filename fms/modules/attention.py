@@ -667,15 +667,17 @@ class MultiHeadAttention(nn.Module):
         q_out, k_out, v_out = self.in_proj(q, k, v)
 
         # note: transposes will be moved in a later PR to fix dis-contiguous tensor issues
-        queries = q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head)
-        keys = k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head)
-        values = v_out.view(batch_size, q_len, self.kvheads, self.emb_v_per_head)
+        with record_function("attn_qkv_t"):
+            queries = q_out.view(batch_size, q_len, self.nheads, self.emb_kq_per_head)
+            keys = k_out.view(batch_size, q_len, self.kvheads, self.emb_kq_per_head)
+            values = v_out.view(batch_size, q_len, self.kvheads, self.emb_v_per_head)
 
         # You want to apply rotary embeddings pre-cache
         if self.position_encoder is not None:
-            queries, keys = self.position_encoder.adjusted_qk(
-                queries, keys, position_ids, past_key_value_state, use_cache
-            )
+            with record_function("attn_qkv_re"):
+                queries, keys = self.position_encoder.adjusted_qk(
+                    queries, keys, position_ids, past_key_value_state, use_cache
+                )
 
         attn_compute_dict = get_attention_type(**attn_kwargs)
 
@@ -683,43 +685,48 @@ class MultiHeadAttention(nn.Module):
             if past_key_value_state is None:
                 past_key_value_state = (None, None)
 
-            keys_compute, values_compute, keys_return, values_return = (
-                attn_compute_dict["store"](
-                    keys,
-                    values,
-                    past_key_value_state[0],
-                    past_key_value_state[1],
-                    **attn_kwargs,
+            with record_function("attn_cache_store"):
+                keys_compute, values_compute, keys_return, values_return = (
+                    attn_compute_dict["store"](
+                        keys,
+                        values,
+                        past_key_value_state[0],
+                        past_key_value_state[1],
+                        **attn_kwargs,
+                    )
                 )
-            )
         else:
             keys_compute, values_compute = keys, values
 
         if attn_compute_dict["is_prefill"](**attn_kwargs):
-            attn = attn_compute_dict["compute_prefill"](
-                queries,
-                keys_compute,
-                values_compute,
-                self.nheads,
-                self.kvheads,
-                self.p_dropout if self.training else 0.0,
-                self.scale_factor,
-                **attn_kwargs,
-            )
+            with record_function("attn_prefill"):
+                attn = attn_compute_dict["compute_prefill"](
+                    queries,
+                    keys_compute,
+                    values_compute,
+                    self.nheads,
+                    self.kvheads,
+                    self.p_dropout if self.training else 0.0,
+                    self.scale_factor,
+                    **attn_kwargs,
+                )
         else:
-            attn = attn_compute_dict["compute_decode"](
-                queries,
-                keys_compute,
-                values_compute,
-                self.nheads,
-                self.kvheads,
-                self.p_dropout if self.training else 0.0,
-                self.scale_factor,
-                **attn_kwargs,
-            )
+            with record_function("attn_decode"):
+                attn = attn_compute_dict["compute_decode"](
+                    queries,
+                    keys_compute,
+                    values_compute,
+                    self.nheads,
+                    self.kvheads,
+                    self.p_dropout if self.training else 0.0,
+                    self.scale_factor,
+                    **attn_kwargs,
+                )
 
-        attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
-        out = self.dense(attn)
+        with record_function("attn_c"):
+            attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
+        with record_function("attn_op"):
+            out = self.dense(attn)
 
         # if use_cache=True, we return the hidden_state as well as the kv cache
         if use_cache:

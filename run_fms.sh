@@ -14,7 +14,6 @@ set -x
 
 cd $SLURM_SUBMIT_DIR
 echo "RUNANDTIME_START $(date +%s)"
-# torchrun --nproc_per_node=1 scripts/inference.py --variant=7b --model_source=meta --model_path=~/.llama/checkpoints/Llama-2-7b --tokenizer=~/.llama/checkpoints/Llama-2-7b/tokenizer.model # --distributed
-torchrun --nproc_per_node=1 hf_batch.py
+./hf_batch.py --prompt_tokens 32 --max_new_tokens 32 --batch_size 128 --n_batch 4
 echo "RUNANDTIME_STOP $(date +%s)"
 

@@ -138,30 +138,34 @@ class LLaMABlock(nn.Module):
         residual = x
         with record_function("attn_n"):
             x = self.ln(x)
-        with record_function("attn_attn"):
-            x = self.attn(
-                q=x,
-                position_ids=position_ids,
-                past_key_value_state=self_attn_past_key_value,
-                use_cache=use_cache,
-                **attn_kwargs,
-            )
+        x = self.attn(
+            q=x,
+            position_ids=position_ids,
+            past_key_value_state=self_attn_past_key_value,
+            use_cache=use_cache,
+            **attn_kwargs,
+        )
         cache = None
         if use_cache:
             x, cache = x
         if self.config.p_dropout != 0:
-            x = self.dropout(x)
+            with record_function("attn_do"):
+                x = self.dropout(x)
         # residual connection
-        x = x + residual
+        with record_function("attn_ra"):
+            x = x + residual
 
         # then we do FF and Add&Norm
         residual = x
-        x = self.ff_ln(x)
+        with record_function("ff_ln"):
+            x = self.ff_ln(x)
         x = self.ff_sub_layer(x)
         if self.config.p_dropout != 0:
-            x = self.dropout(x)
+            with record_function("ff_do"):
+                x = self.dropout(x)
         # another residual
-        x = x + residual
+        with record_function("ff_ra"):
+            x = x + residual
 
         if use_cache:
             return (x, cache)

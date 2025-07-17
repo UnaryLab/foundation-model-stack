@@ -93,9 +93,27 @@ parser.add_argument(
     help="This is a distributed job (multiple instances run with RANK+WORLD_SIZE)",
 )
 parser.add_argument(
-    "--batch_input",
+    "--pytorch_profiler",
     action="store_true",
-    help="use a batch of prompts as input",
+    help="Run pytorch profiler",
+)
+parser.add_argument(
+    "--num_batches",
+    type=int,
+    help="Number of batches to use",
+    default=1,
+)
+parser.add_argument(
+    "--num_tokens",
+    type=int,
+    help="Number of tokens for prompt",
+    default=25,
+)
+parser.add_argument(
+    "--token",
+    type=str,
+    help="String to use a token",
+    default="123",
 )
 parser.add_argument(
     "--min_pad_length",
@@ -109,7 +127,6 @@ parser.add_argument(
     help="Type of attention to use",
     default="sdpa_causal",
 )
-parser.add_argument("--context_file", type=str, default=None, help="File to summarize")
 
 args = parser.parse_args()
 
@@ -176,47 +193,18 @@ if args.compile:
     model.compile(mode=args.compile_mode)
 
 
-def ids_for_prompt(prompt):
+def ids_for_prompt(prompt, tok_req):
     tokens = tokenizer.tokenize(prompt)
+    assert len(tokens) == tok_req, "Prompt has different number of tokens than requested, change --token based on the model"
     ids = tokenizer.convert_tokens_to_ids(tokens)
     ids = [tokenizer.bos_token_id] + ids
     ids = torch.tensor(ids, dtype=torch.long, device=device)
     return ids
 
 
-if args.context_file is not None:
-    # during testing, the context_file used was a copy/paste of the text of:
-    # https://arxiv.org/pdf/2306.15595.pdf
-    with open(args.context_file) as file:
-        long_prompt = file.read()
-        prompt1 = (
-            long_prompt
-            + "\nPlease give me a brief summary of this research paper in a few bullet points."
-        )
-        # prompt1 = long_prompt + "\nDescribe work that was done concurrently with the research in this paper."
-        prompt2 = long_prompt + "\nPlease write me the abstract for this paper."
-else:
-    template = "Below is an instruction that describes a task. Write a response that appropriately completes the request.\n\n### Instruction:\n{}\n\n### Response:"
-
-    prompt1 = template.format(
-        "Provide a list of instructions for preparing chicken soup."
-    )
-    prompt2 = template.format("Explain some popular greetings in Spanish.")
-
-prompt1 = ids_for_prompt(prompt1)
-prompt2 = ids_for_prompt(prompt2)
-max_len = max([len(prompt) for prompt in [prompt1, prompt2]])
-
-
-if args.batch_input:
-    ids = [prompt1, prompt2]
-    ids, padding_kwargs = pad_input_ids(ids, min_pad_length=args.min_pad_length)
-else:
-    ids = prompt1
-    if args.min_pad_length != 0:
-        ids, padding_kwargs = pad_input_ids([ids], min_pad_length=args.min_pad_length)
-    else:
-        padding_kwargs = None
+prompt = args.token * args.num_tokens
+ids = [ids_for_prompt(prompt, args.num_tokens) for _ in range(args.num_batches)]
+ids, padding_kwargs = pad_input_ids(ids, min_pad_length=args.min_pad_length)
 
 
 def print_result(result):
@@ -250,7 +238,7 @@ def infer(use_cache, do_sample):
         getattr(model.config, "ntk_scaling", None) is not None
         and model.config.ntk_scaling
     ):
-        max_seq_len = max(max_len, model.config.max_expected_seq_len)
+        max_seq_len = max(len(prompt), model.config.max_expected_seq_len)
     else:
         # without ntk scaling, extending the seq length too far gives bogus results.
         max_seq_len = model.config.max_expected_seq_len
@@ -279,17 +267,21 @@ use_cache = [
     args.no_use_cache
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
 
-et = ExecutionTraceObserver()
-et.register_callback("pytorch_et.json")
+if args.pytorch_profiler:
+    et = ExecutionTraceObserver()
+    et.register_callback("pytorch_et.json")
 
-with profile(
-    activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-    # schedule = tracing_schedule,
-    on_trace_ready=lambda x: x.export_chrome_trace("kineto_trace.json"),
-    profile_memory=True,
-    record_shapes=True,
-    with_stack=True,
-    execution_trace_observer=et,
-) as prof:
+    with profile(
+        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+        # schedule = tracing_schedule,
+        on_trace_ready=lambda x: x.export_chrome_trace("kineto_trace.json"),
+        profile_memory=True,
+        record_shapes=True,
+        with_stack=True,
+        execution_trace_observer=et,
+    ) as prof:
+        for sample, cache in itertools.product(do_sample, use_cache):
+            infer(cache, sample)
+else:
     for sample, cache in itertools.product(do_sample, use_cache):
         infer(cache, sample)

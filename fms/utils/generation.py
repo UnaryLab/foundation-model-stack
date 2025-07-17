@@ -7,6 +7,7 @@ import torch
 import torch.nn.functional as F
 
 from fms.modules.ssm import SSMCacheUnit
+from torch.profiler import record_function
 
 
 logger = logging.getLogger(__name__)
@@ -287,20 +288,25 @@ def generate(
             # get logits from last value in sequence nad scale
             logits = logits / temperature
             if top_k:
-                v, _ = torch.topk(logits, top_k)
-                logits[logits < v[:, [-1]]] = -float("inf")
+                with record_function("topk"):
+                    v, _ = torch.topk(logits, top_k)
+                    logits[logits < v[:, [-1]]] = -float("inf")
 
-            probs = F.softmax(logits, dim=-1)
-            next_val = torch.multinomial(probs, num_samples=1)
+            with record_function("prob"):
+                probs = F.softmax(logits, dim=-1)
+            with record_function("multi"):
+                next_val = torch.multinomial(probs, num_samples=1)
         else:
-            next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
+            with record_function("argmax"):
+                next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
 
         if post_iteration_hook is not None:
             next_val, kwargs = post_iteration_hook(
                 i + prompt_length, logits, next_val, kwargs
             )
 
-        result = torch.cat((result, next_val), dim=-1)
+        with record_function("save_token"):
+            result = torch.cat((result, next_val), dim=-1)
 
         # avoid continuing to generate if all have reached EOS
         if eos_token_id is not None:

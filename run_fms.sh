@@ -10,7 +10,7 @@
 #SBATCH --mem=0
 #SBATCH --time=08:00:00
 
-# set -x
+set -eu
 
 cd $SLURM_SUBMIT_DIR
 source fms_env
@@ -24,15 +24,38 @@ source fms_env
 
 # FMS_SCRIPT=hf_batch.py
 
+COUNTERS=0
+
+COUNTERS_ARGS=(
+        ncu
+        -f
+        --target-processes all
+        --profile-from-start no
+        -o memory
+        --section "regex:MemoryWorkloadAnalysis(_Chart|_Tables)?"
+        --replay-mode application
+)
+
+if [[ $COUNTERS -eq 0 ]]; then
+  COUNTERS_ARGS+=(--pytorch_profiler)
+fi
+
 TORCHRUN_ARGS=(
   --nproc_per_node=1
   scripts/inference.py
   --architecture hf_pretrained
   --variant meta-llama/Llama-3.1-8B
   --tokenizer meta-llama/Llama-3.1-8B
+  --num_batches 128
+  --token "123"
+  --num_tokens 256
 )
 
 echo "FMS_START $(date +%s)"
-torchrun ${TORCHRUN_ARGS[@]}
+if [[ $COUNTERS -eq 1 ]]; then
+  ${COUNTERS_ARGS[@]} torchrun ${TORCHRUN_ARGS[@]}
+else
+  torchrun ${TORCHRUN_ARGS[@]}
+fi
 echo "FMS_STOP $(date +%s)"
 

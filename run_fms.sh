@@ -32,7 +32,10 @@ COUNTERS_ARGS=(
         --target-processes all
         --profile-from-start no
         -o memory
-        --section "regex:MemoryWorkloadAnalysis(_Chart|_Tables)?"
+        --metrics
+        sm__ops_path_tensor_src_bf16_dst_fp32.sum 
+        dram__bytes_read.sum
+        dram__bytes_write.sum
         --replay-mode application
 )
 

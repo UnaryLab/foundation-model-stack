@@ -24,7 +24,8 @@ source fms_env
 
 # FMS_SCRIPT=hf_batch.py
 
-COUNTERS=0
+COUNTER_PROFILER=0
+PYTORCH_PROFILER=0
 
 COUNTERS_ARGS=(
         ncu
@@ -39,10 +40,6 @@ COUNTERS_ARGS=(
         --replay-mode application
 )
 
-if [[ $COUNTERS -eq 0 ]]; then
-  COUNTERS_ARGS+=(--pytorch_profiler)
-fi
-
 TORCHRUN_ARGS=(
   --nproc_per_node=1
   scripts/inference.py
@@ -54,8 +51,17 @@ TORCHRUN_ARGS=(
   --num_tokens 256
 )
 
+if [[ $PYTORCH_PROFILER -eq 1 ]]; then
+  TORCHRUN_ARGS+=(--pytorch_profiler)
+fi
+
+if [[ $COUNTER_PROFILER -eq 1 ]]; then
+  TORCHRUN_ARGS+=(--ncu_profiler)
+fi
+
+
 echo "FMS_START $(date +%s)"
-if [[ $COUNTERS -eq 1 ]]; then
+if [[ $COUNTER_PROFILER -eq 1 ]]; then
   ${COUNTERS_ARGS[@]} torchrun ${TORCHRUN_ARGS[@]}
 else
   torchrun ${TORCHRUN_ARGS[@]}

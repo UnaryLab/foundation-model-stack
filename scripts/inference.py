@@ -98,6 +98,11 @@ parser.add_argument(
     help="Run pytorch profiler",
 )
 parser.add_argument(
+    "--ncu_profiler",
+    action="store_true",
+    help="Run ncu profiler",
+)
+parser.add_argument(
     "--num_batches",
     type=int,
     help="Number of batches to use",
@@ -107,6 +112,12 @@ parser.add_argument(
     "--num_tokens",
     type=int,
     help="Number of tokens for prompt",
+    default=25,
+)
+parser.add_argument(
+    "--max_new_tokens",
+    type=int,
+    help="Number of tokens to generate",
     default=25,
 )
 parser.add_argument(
@@ -195,7 +206,8 @@ if args.compile:
 
 def ids_for_prompt(prompt, tok_req):
     tokens = tokenizer.tokenize(prompt)
-    assert len(tokens) == tok_req, "Prompt has different number of tokens than requested, change --token based on the model"
+    assert len(
+        tokens) == tok_req, "Prompt has different number of tokens than requested, change --token based on the model"
     ids = tokenizer.convert_tokens_to_ids(tokens)
     ids = [tokenizer.bos_token_id] + ids
     ids = torch.tensor(ids, dtype=torch.long, device=device)
@@ -203,7 +215,8 @@ def ids_for_prompt(prompt, tok_req):
 
 
 prompt = args.token * args.num_tokens
-ids = [ids_for_prompt(prompt, args.num_tokens) for _ in range(args.num_batches)]
+ids = [ids_for_prompt(prompt, args.num_tokens)
+       for _ in range(args.num_batches)]
 ids, padding_kwargs = pad_input_ids(ids, min_pad_length=args.min_pad_length)
 
 
@@ -245,14 +258,21 @@ def infer(use_cache, do_sample):
     if padding_kwargs is None:
         padding_kwargs = {}
     padding_kwargs["attn_name"] = args.attn_name
+
+    if args.ncu_profiler:
+        ncu_profiler_token = args.max_new_tokens - 1
+    else:
+        ncu_profiler_token = None
+
     result = generate(
         model,
         ids,
-        max_new_tokens=100,
+        max_new_tokens=args.max_new_tokens,
         use_cache=use_cache,
         do_sample=do_sample,
         max_seq_len=max_seq_len,
         extra_kwargs=padding_kwargs,
+        ncu_profiler_token=ncu_profiler_token,
     )
     if len(result.shape) == 1:
         result = result.unsqueeze(0)
@@ -268,6 +288,7 @@ use_cache = [
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
 
 if args.pytorch_profiler:
+    assert args.ncu_profiler is False, "Don't use NCU and pytorch at the same time"
     et = ExecutionTraceObserver()
     et.register_callback("pytorch_et.json")
 

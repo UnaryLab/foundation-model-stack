@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 from fms.modules.ssm import SSMCacheUnit
 from torch.profiler import record_function
-
+from cuda import cuda
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +182,7 @@ def generate(
         ]
     ] = None,
     extra_kwargs: Optional[MutableMapping[str, Any]] = None,
+    ncu_profiler_token: Optional[int] = None,
 ):
     """
     A trivial generate function that can be used for validation/testing in
@@ -253,7 +254,10 @@ def generate(
 
     eos_reached: bool = False
 
+    use_ncu = ncu_profiler_token is not None
     for i in range(max_new_tokens):
+        if use_ncu and i == ncu_profiler_token-1:
+            cuda.cuProfilerStart()
         input_ids = next_input[:, -max_seq_len:]
 
         # prepare any padding keyword arguments
@@ -318,6 +322,9 @@ def generate(
             next_input = next_val
         else:
             next_input = result
+
+        if use_ncu and i == ncu_profiler_token-1:
+            cuda.cuProfilerStop()
 
         if timing == "per-token":
             if input_ids.device.type == "cuda":

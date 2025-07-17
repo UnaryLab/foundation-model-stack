@@ -699,29 +699,27 @@ class MultiHeadAttention(nn.Module):
             keys_compute, values_compute = keys, values
 
         if attn_compute_dict["is_prefill"](**attn_kwargs):
-            with record_function("attn_prefill"):
-                attn = attn_compute_dict["compute_prefill"](
-                    queries,
-                    keys_compute,
-                    values_compute,
-                    self.nheads,
-                    self.kvheads,
-                    self.p_dropout if self.training else 0.0,
-                    self.scale_factor,
-                    **attn_kwargs,
-                )
+            attn = attn_compute_dict["compute_prefill"](
+                queries,
+                keys_compute,
+                values_compute,
+                self.nheads,
+                self.kvheads,
+                self.p_dropout if self.training else 0.0,
+                self.scale_factor,
+                **attn_kwargs,
+            )
         else:
-            with record_function("attn_decode"):
-                attn = attn_compute_dict["compute_decode"](
-                    queries,
-                    keys_compute,
-                    values_compute,
-                    self.nheads,
-                    self.kvheads,
-                    self.p_dropout if self.training else 0.0,
-                    self.scale_factor,
-                    **attn_kwargs,
-                )
+            attn = attn_compute_dict["compute_decode"](
+                queries,
+                keys_compute,
+                values_compute,
+                self.nheads,
+                self.kvheads,
+                self.p_dropout if self.training else 0.0,
+                self.scale_factor,
+                **attn_kwargs,
+            )
 
         with record_function("attn_c"):
             attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)

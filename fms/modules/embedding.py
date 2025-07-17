@@ -4,6 +4,7 @@ import torch
 import torch.distributed
 import torch.nn as nn
 from torch.distributed.distributed_c10d import ProcessGroup
+from torch.profiler import record_function
 
 from fms import distributed
 from fms.distributed.tensorparallel import (
@@ -124,7 +125,8 @@ class WordEmbedding(nn.Module):
                 assert self.reversible, (
                     "Error: cannot make prediction when there is no output head!"
                 )
-            return self.head(inp)
+            with record_function("lp"):
+                return self.head(inp)
 
 
 class TPWordEmbedding(WordEmbedding, TPModule):

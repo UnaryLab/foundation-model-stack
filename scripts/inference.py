@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import torch._inductor.config
 from torch import distributed as dist
+from torch.profiler import profile, ProfilerActivity, ExecutionTraceObserver
 
 from fms.models import get_model
 from fms.utils import generation, tokenizers
@@ -277,5 +278,18 @@ do_sample = [False]
 use_cache = [
     args.no_use_cache
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
-for sample, cache in itertools.product(do_sample, use_cache):
-    infer(cache, sample)
+
+et = ExecutionTraceObserver()
+et.register_callback("pytorch_et.json")
+
+with profile(
+    activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+    # schedule = tracing_schedule,
+    on_trace_ready=lambda x: x.export_chrome_trace("kineto_trace.json"),
+    profile_memory=True,
+    record_shapes=True,
+    with_stack=True,
+    execution_trace_observer=et,
+) as prof:
+    for sample, cache in itertools.product(do_sample, use_cache):
+        infer(cache, sample)

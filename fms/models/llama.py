@@ -406,7 +406,8 @@ class LLaMA(nn.Module):
 
         if only_last_token:
             output = output[:, -1, :]
-        preds = self.shared(output, reverse=True)
+        with record_function("lp"):
+            preds = self.shared(output, reverse=True)
 
         if use_cache:
             return preds, cache

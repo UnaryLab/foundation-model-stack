@@ -10,10 +10,29 @@
 #SBATCH --mem=0
 #SBATCH --time=08:00:00
 
-set -x
+# set -x
 
 cd $SLURM_SUBMIT_DIR
-echo "RUNANDTIME_START $(date +%s)"
-./hf_batch.py --prompt_tokens 32 --max_new_tokens 32 --batch_size 128 --n_batch 4
-echo "RUNANDTIME_STOP $(date +%s)"
+source fms_env
+
+# FMS_ARGS=(
+#   --prompt_tokens 32
+#   --max_new_tokens 32
+#   --batch_size 128
+#   --n_batch 4
+# )
+
+# FMS_SCRIPT=hf_batch.py
+
+TORCHRUN_ARGS=(
+  --nproc_per_node=1
+  scripts/inference.py
+  --architecture hf_pretrained
+  --variant meta-llama/Llama-3.1-8B
+  --tokenizer meta-llama/Llama-3.1-8B
+)
+
+echo "FMS_START $(date +%s)"
+torchrun ${TORCHRUN_ARGS[@]}
+echo "FMS_STOP $(date +%s)"
 

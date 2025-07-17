@@ -1,0 +1,5 @@
+module reset
+# module load gcc/11.4.0 python
+# need triton built from source beacuse of grace CPU
+module load python
+. .venv/bin/activate

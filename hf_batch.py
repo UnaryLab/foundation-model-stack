@@ -2,7 +2,7 @@
 
 import torch
 from torch.utils.data import Dataset
-from torch.profiler import profile, ProfilerActivity
+from torch.profiler import profile, ProfilerActivity, ExecutionTraceObserver
 from transformers import pipeline, AutoTokenizer
 from fms.models import get_model
 from fms.models.hf import to_hf_api
@@ -52,14 +52,24 @@ def main(
 
     dataset = MyDataset()
 
+    et = ExecutionTraceObserver()
+    et.register_callback("pytorch_et.json")
+
     with profile(
         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+        # schedule = tracing_schedule,
+        on_trace_ready=lambda x: x.export_chrome_trace("kineto_trace.json"),
+        profile_memory=True,
+        record_shapes=True,
+        with_stack=True,
+        execution_trace_observer=et,
     ) as prof:
+        # with profile(
+        #     activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+        # ) as prof:
         result = pipe(dataset, batch_size=batch_size)
         for r in result:
             print(r)
-    prof.export_chrome_trace(
-        f"hf_{device}_{'compiled_' if compile else ''}trace.json")
 
 
 if __name__ == "__main__":

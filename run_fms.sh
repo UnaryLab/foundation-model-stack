@@ -43,7 +43,7 @@ TORCHRUN_ARGS=(
   --token "123"
   --num_tokens 256
   --max_new_tokens 32
-  --with_stack
+  # --with_stack
 )
 
 if [[ $PYTORCH_PROFILER -eq 1 ]]; then

@@ -237,9 +237,10 @@ def generate(
     else:
         raise TypeError("input_ids must be one of Tensor or List")
 
-    eos_found = torch.zeros(
-        input_ids.shape[0], dtype=torch.bool, device=input_ids.device
-    )
+    with record_function("eos_flag"):
+        eos_found = torch.zeros(
+            input_ids.shape[0], dtype=torch.bool, device=input_ids.device
+        )
 
     result = input_ids
     next_input = input_ids

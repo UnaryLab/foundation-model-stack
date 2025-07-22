@@ -8,7 +8,6 @@ import torch.nn.functional as F
 
 from fms.modules.ssm import SSMCacheUnit
 from torch.profiler import record_function
-from cuda import cuda
 
 logger = logging.getLogger(__name__)
 
@@ -97,16 +96,17 @@ def __update_padding_kwargs(
         model_specific_kwargs = attn_op["update_attn_kwargs"](**model_specific_kwargs)
 
     # extend the position_ids
-    position_ids = model_specific_kwargs.get("position_ids", None)
-    if position_ids is not None:
-        if use_cache:
-            position_ids = position_ids[:, -1:] + 1
-        else:
-            position_ids = torch.cat(
-                (position_ids, position_ids[:, -1:] + 1),
-                dim=1,
-            )
-        model_specific_kwargs["position_ids"] = position_ids
+    with record_function("update_pos_id"):
+        position_ids = model_specific_kwargs.get("position_ids", None)
+        if position_ids is not None:
+            if use_cache:
+                position_ids = position_ids[:, -1:] + 1
+            else:
+                position_ids = torch.cat(
+                    (position_ids, position_ids[:, -1:] + 1),
+                    dim=1,
+                )
+            model_specific_kwargs["position_ids"] = position_ids
     return model_specific_kwargs
 
 
@@ -256,85 +256,88 @@ def generate(
 
     use_ncu = ncu_profiler_token is not None
     for i in range(max_new_tokens):
-        if use_ncu and i == ncu_profiler_token-1:
-            cuda.cuProfilerStart()
-        input_ids = next_input[:, -max_seq_len:]
+        with record_function(f"Token{i}"):
+            if use_ncu and i == ncu_profiler_token-1:
+                torch.cuda.profiler.start()
+            input_ids = next_input[:, -max_seq_len:]
 
-        # prepare any padding keyword arguments
-        # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend the mask/position_ids
-        if i > 0:
-            kwargs = __update_padding_kwargs(use_cache, kwargs)
+            # prepare any padding keyword arguments
+            # iteration 0 is the prefill step (cache has not been filled yet), so no need to extend the mask/position_ids
+            if i > 0:
+                kwargs = __update_padding_kwargs(use_cache, kwargs)
 
-        if prepare_model_inputs_hook is not None:
-            input_ids, kwargs = prepare_model_inputs_hook(i, input_ids, kwargs)
+            if prepare_model_inputs_hook is not None:
+                input_ids, kwargs = prepare_model_inputs_hook(i, input_ids, kwargs)
 
-        output = model(input_ids, **kwargs)
-        if use_cache:
-            logits, past_key_value_states = output
-            # TODO: this should go away when reduce-overhead issues are fixed, or
-            # maybe could be moved into model code to be more portable.
-            kwargs["past_key_value_states"] = past_key_value_states
-            if contiguous_cache:
-                kwargs["past_key_value_states"] = _make_cache_contiguous(
-                    kwargs["past_key_value_states"]
+            output = model(input_ids, **kwargs)
+            if use_cache:
+                logits, past_key_value_states = output
+                # TODO: this should go away when reduce-overhead issues are fixed, or
+                # maybe could be moved into model code to be more portable.
+                kwargs["past_key_value_states"] = past_key_value_states
+                if contiguous_cache:
+                    with record_function("cache_c"):
+                        kwargs["past_key_value_states"] = _make_cache_contiguous(
+                            kwargs["past_key_value_states"]
+                        )
+                if torch._dynamo.config.dynamic_shapes:
+                    with record_function("cache_dyn"):
+                        kwargs["past_key_value_states"] = _make_cache_dynamic(
+                            kwargs["past_key_value_states"]
+                        )
+            else:
+                logits = output
+
+            if "only_last_token" not in kwargs:
+                logits = logits[:, -1, :]
+
+            if do_sample:
+                # get logits from last value in sequence nad scale
+                logits = logits / temperature
+                if top_k:
+                    with record_function("topk"):
+                        v, _ = torch.topk(logits, top_k)
+                        logits[logits < v[:, [-1]]] = -float("inf")
+
+                with record_function("prob"):
+                    probs = F.softmax(logits, dim=-1)
+                with record_function("multi"):
+                    next_val = torch.multinomial(probs, num_samples=1)
+            else:
+                with record_function("argmax"):
+                    next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
+
+            if post_iteration_hook is not None:
+                next_val, kwargs = post_iteration_hook(
+                    i + prompt_length, logits, next_val, kwargs
                 )
-            if torch._dynamo.config.dynamic_shapes:
-                kwargs["past_key_value_states"] = _make_cache_dynamic(
-                    kwargs["past_key_value_states"]
-                )
-        else:
-            logits = output
 
-        if "only_last_token" not in kwargs:
-            logits = logits[:, -1, :]
+            with record_function("save_token"):
+                result = torch.cat((result, next_val), dim=-1)
 
-        if do_sample:
-            # get logits from last value in sequence nad scale
-            logits = logits / temperature
-            if top_k:
-                with record_function("topk"):
-                    v, _ = torch.topk(logits, top_k)
-                    logits[logits < v[:, [-1]]] = -float("inf")
+            # avoid continuing to generate if all have reached EOS
+            if eos_token_id is not None:
+                eos_found = torch.logical_or(eos_found, next_val == eos_token_id)
+                if torch.sum(eos_found) == input_ids.shape[0]:
+                    eos_reached = True
 
-            with record_function("prob"):
-                probs = F.softmax(logits, dim=-1)
-            with record_function("multi"):
-                next_val = torch.multinomial(probs, num_samples=1)
-        else:
-            with record_function("argmax"):
-                next_val = torch.argmax(logits, dim=-1).unsqueeze(0).t()
+            if use_cache:
+                next_input = next_val
+            else:
+                next_input = result
 
-        if post_iteration_hook is not None:
-            next_val, kwargs = post_iteration_hook(
-                i + prompt_length, logits, next_val, kwargs
-            )
+            if use_ncu and i == ncu_profiler_token-1:
+                torch.cuda.profiler.stop()
 
-        with record_function("save_token"):
-            result = torch.cat((result, next_val), dim=-1)
+            if timing == "per-token":
+                if input_ids.device.type == "cuda":
+                    torch.cuda.synchronize()
+                current_token_time = time.time() - start_time
+                times.append(current_token_time)
+                start_time = time.time()
 
-        # avoid continuing to generate if all have reached EOS
-        if eos_token_id is not None:
-            eos_found = torch.logical_or(eos_found, next_val == eos_token_id)
-            if torch.sum(eos_found) == input_ids.shape[0]:
-                eos_reached = True
-
-        if use_cache:
-            next_input = next_val
-        else:
-            next_input = result
-
-        if use_ncu and i == ncu_profiler_token-1:
-            cuda.cuProfilerStop()
-
-        if timing == "per-token":
-            if input_ids.device.type == "cuda":
-                torch.cuda.synchronize()
-            current_token_time = time.time() - start_time
-            times.append(current_token_time)
-            start_time = time.time()
-
-        if eos_reached:
-            break
+            if eos_reached:
+                break
 
     if timing == "e2e":
         if input_ids.device.type == "cuda":

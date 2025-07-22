@@ -15,17 +15,8 @@ set -eu
 cd $SLURM_SUBMIT_DIR
 source fms_env
 
-# FMS_ARGS=(
-#   --prompt_tokens 32
-#   --max_new_tokens 32
-#   --batch_size 128
-#   --n_batch 4
-# )
-
-# FMS_SCRIPT=hf_batch.py
-
 COUNTER_PROFILER=0
-PYTORCH_PROFILER=0
+PYTORCH_PROFILER=1
 
 COUNTERS_ARGS=(
         ncu
@@ -40,15 +31,19 @@ COUNTERS_ARGS=(
         --replay-mode application
 )
 
+MODEL=meta-llama/Llama-3.1-8B
+
 TORCHRUN_ARGS=(
   --nproc_per_node=1
   scripts/inference.py
   --architecture hf_pretrained
-  --variant meta-llama/Llama-3.1-8B
-  --tokenizer meta-llama/Llama-3.1-8B
+  --variant ${MODEL}
+  --tokenizer ${MODEL}
   --num_batches 128
   --token "123"
   --num_tokens 256
+  --max_new_tokens 32
+  --with_stack
 )
 
 if [[ $PYTORCH_PROFILER -eq 1 ]]; then

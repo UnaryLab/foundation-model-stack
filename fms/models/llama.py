@@ -361,20 +361,21 @@ class LLaMA(nn.Module):
         present_key_value_states = []
 
         for i, layer in enumerate(self.layers):
-            output = layer(
-                x=x_in,
-                position_ids=position_ids,
-                past_key_value_state=past_key_value_states[i],
-                use_cache=use_cache,
-                **attn_kwargs,
-            )
+            with record_function(f"Layer{i}"):
+                output = layer(
+                    x=x_in,
+                    position_ids=position_ids,
+                    past_key_value_state=past_key_value_states[i],
+                    use_cache=use_cache,
+                    **attn_kwargs,
+                )
 
-            if use_cache:
-                x_in, present_key_value_state = output
-                present_key_value_states.append(present_key_value_state)
+                if use_cache:
+                    x_in, present_key_value_state = output
+                    present_key_value_states.append(present_key_value_state)
 
-            else:
-                x_in = output
+                else:
+                    x_in = output
 
         dec_out = x_in
         with record_function("ln"):

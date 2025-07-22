@@ -103,6 +103,11 @@ parser.add_argument(
     help="Run ncu profiler",
 )
 parser.add_argument(
+    "--with_stack",
+    action="store_true",
+    help="Capture callstack in trace",
+)
+parser.add_argument(
     "--num_batches",
     type=int,
     help="Number of batches to use",
@@ -289,17 +294,17 @@ use_cache = [
 
 if args.pytorch_profiler:
     assert args.ncu_profiler is False, "Don't use NCU and pytorch at the same time"
-    et = ExecutionTraceObserver()
-    et.register_callback("pytorch_et.json")
+    # et = ExecutionTraceObserver()
+    # et.register_callback("pytorch_et.json")
 
     with profile(
         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
         # schedule = tracing_schedule,
         on_trace_ready=lambda x: x.export_chrome_trace("kineto_trace.json"),
-        profile_memory=True,
+        # profile_memory=True,
         record_shapes=True,
-        with_stack=True,
-        execution_trace_observer=et,
+        with_stack=args.with_stack,
+        # execution_trace_observer=et,
     ) as prof:
         for sample, cache in itertools.product(do_sample, use_cache):
             infer(cache, sample)

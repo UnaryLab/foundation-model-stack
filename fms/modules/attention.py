@@ -216,7 +216,7 @@ def _sdpa_compute_op(
     # Expand kv so black-box attn will work
     expansion = nheads // kvheads
     # k/v: b h l d
-    with record_function("attn_c"):
+    with record_function("attn_kvc"):
         if expansion != 1:
             keys_e = key_cache.unsqueeze(2).expand(-1, -1, expansion, -1, -1).flatten(1, 2)
             values_e = (
@@ -237,9 +237,10 @@ def _sdpa_compute_op(
         torch.backends.cuda.enable_mem_efficient_sdp(use_mem_efficient)
         torch.backends.cuda.enable_math_sdp(use_math)
 
-    attn_mask = mask
-    if attn_mask is not None and attn_mask.dtype != torch.bool:
-        attn_mask = attn_mask.to(dtype=queries.dtype)
+    with record_function("attn_mask_dtype"):
+        attn_mask = mask
+        if attn_mask is not None and attn_mask.dtype != torch.bool:
+            attn_mask = attn_mask.to(dtype=queries.dtype)
 
     is_causal = attn_kwargs.get(
         "is_causal_mask",
@@ -721,7 +722,7 @@ class MultiHeadAttention(nn.Module):
                 **attn_kwargs,
             )
 
-        with record_function("attn_c"):
+        with record_function("attn_oc"):
             attn = attn.view(batch_size, q_len, self.nheads * self.emb_v_per_head)
         with record_function("attn_op"):
             out = self.dense(attn)

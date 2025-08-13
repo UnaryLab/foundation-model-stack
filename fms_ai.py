@@ -42,7 +42,7 @@ def tensor_ai(df):
     )
 
 
-def main(df_filename: str, n: int = 10):
+def print_ai(df_filename: str, n: int):
     """
     Extract arithmetic intensity from a chopper trace taken on an NVIDIA machine
     """
@@ -73,6 +73,7 @@ def main(df_filename: str, n: int = 10):
 
     nonzero = (df[tensor_ai.name] != 0) & ~df[tensor_ai.name].isna()
 
+    print('-'*50)
     print('Largest', tensor_ai.name)
     ai = df[nonzero].groupby('operator-name')[tensor_ai.name].agg(agg_cols)
     print(ai.nlargest(n, columns=agg_cols).reset_index())
@@ -88,6 +89,20 @@ def main(df_filename: str, n: int = 10):
     print('Kernels')
     ai = df[nonzero].groupby('operator-name')['count'].agg(agg_cols)
     print(ai.nlargest(n, columns=agg_cols).reset_index())
+
+    print('-'*50)
+
+    op = 'ff_dp'
+    assert op in df['operator-name'].unique()
+
+    mask = (df['operator-name'] == op) & (df[hbm_bytes.name] > 0)
+    print(df.loc[mask, ['token', 'layer', hbm_bytes.name]])
+
+    print('-'*50)
+
+
+def main(df_filename: str, n: int = 10):
+    print_ai(df_filename, n)
 
 
 if __name__ == '__main__':

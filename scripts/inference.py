@@ -103,6 +103,12 @@ parser.add_argument(
     help="Run pytorch profiler",
 )
 parser.add_argument(
+    "--pytorch_profiler_output",
+    type=str,
+    help="pytorch profiler output name",
+    default="kineto_trace",
+)
+parser.add_argument(
     "--ncu_profiler",
     action="store_true",
     help="Run ncu profiler",
@@ -304,9 +310,7 @@ use_cache = [
     args.no_use_cache
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
 
-
-
-## experimental config doesn't work:
+# experimental config doesn't work:
 # if args.pytorch_profiler:
 #     with torch.profiler.profile(
 #         # Currently only supports events on CUDA/GPU side, so do not add ProfilerActivity.CPU
@@ -332,15 +336,17 @@ use_cache = [
 
 #     prof.export_chrome_trace("cupti.json.gz")
 
-    
+
 if args.pytorch_profiler:
     assert args.ncu_profiler is False, "Don't use NCU and pytorch at the same time"
     # et = ExecutionTraceObserver()
     # et.register_callback("pytorch_et.json")
 
     with torch.profiler.profile(
-        activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
-        on_trace_ready=lambda x: x.export_chrome_trace("kineto_trace.json"),
+        activities=[torch.profiler.ProfilerActivity.CPU,
+                    torch.profiler.ProfilerActivity.CUDA],
+        on_trace_ready=lambda x: x.export_chrome_trace(
+            f"{args.pytorch_profiler_output}.json"),
         with_stack=args.with_stack,
         # schedule = tracing_schedule,
         # profile_memory=True,

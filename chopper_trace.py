@@ -601,8 +601,15 @@ def get_merged(
         left_on=left_group_arrs,
         right_on=right_group_arrs,
         how="left",
-        suffixes=('', '_y'),
+        suffixes=('', '_chopper_prev'),
     ).drop(columns=['_mi']).sort_values("ts")
+
+    y_cols = [c for c in df_merged if c.endswith('_chopper_prev')]
+    for y_col in y_cols:
+        base_col = y_col[:-len('_chopper_prev')]
+        df_merged[base_col] = df_merged[base_col].combine_first(
+            df_merged[y_col])
+    df_merged.drop(columns=y_cols, inplace=True)
 
     # nan_mask = ~df_merged["gpu_y"].isna()
     # test_mask = (df_merged.loc[nan_mask, "gpu"] ==
@@ -613,6 +620,9 @@ def get_merged(
 
     assert 'gpu_y' not in df_merged.columns
     df_merged.drop(columns=[kname], inplace=True)
+
+    info(
+        f"Got profiler token: {token}, now we have: {df_merged['token'].unique()}")
 
     return df_merged
 

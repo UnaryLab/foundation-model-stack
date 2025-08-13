@@ -682,7 +682,7 @@ if __name__ == "__main__":
         "4) Pass multiple duration pickles to merge duration pickles\n"
     )
     parser = ArgumentParser(
-        prog="genie_duration",
+        prog="chopper_trace",
         description=desc,
     )
     parser.add_argument(

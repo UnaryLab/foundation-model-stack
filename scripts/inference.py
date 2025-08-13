@@ -7,7 +7,12 @@ import numpy as np
 import torch
 import torch._inductor.config
 from torch import distributed as dist
-from torch.profiler import profile, ProfilerActivity, ExecutionTraceObserver
+# from torch.profiler import (
+#     profile,
+#     ProfilerActivity,
+#     ExecutionTraceObserver,
+#     _ExperimentalConfig,
+# )
 
 from fms.models import get_model
 from fms.utils import generation, tokenizers
@@ -101,6 +106,11 @@ parser.add_argument(
     "--ncu_profiler",
     action="store_true",
     help="Run ncu profiler",
+)
+parser.add_argument(
+    "--ncu_profiler_token",
+    type=int,
+    help="token to profile",
 )
 parser.add_argument(
     "--with_stack",
@@ -265,9 +275,11 @@ def infer(use_cache, do_sample):
     padding_kwargs["attn_name"] = args.attn_name
 
     if args.ncu_profiler:
-        ncu_profiler_token = args.max_new_tokens - 1
+        npt = args.ncu_profiler_token
+        assert npt is not None, "Need to pass token to profile"
+        assert npt < args.max_new_tokens and npt >= 0, "Invalid profiler token"
     else:
-        ncu_profiler_token = None
+        npt = None
 
     result = generate(
         model,
@@ -277,7 +289,7 @@ def infer(use_cache, do_sample):
         do_sample=do_sample,
         max_seq_len=max_seq_len,
         extra_kwargs=padding_kwargs,
-        ncu_profiler_token=ncu_profiler_token,
+        ncu_profiler_token=npt,
     )
     if len(result.shape) == 1:
         result = result.unsqueeze(0)
@@ -292,18 +304,47 @@ use_cache = [
     args.no_use_cache
 ]  # True/False are identical with greedy iff `torch.use_deterministic_algorithms(True)`
 
+
+
+## experimental config doesn't work:
+# if args.pytorch_profiler:
+#     with torch.profiler.profile(
+#         # Currently only supports events on CUDA/GPU side, so do not add ProfilerActivity.CPU
+#         # this restriction is being removed
+#         activities=[torch.profiler.ProfilerActivity.CUDA],
+#         record_shapes=True,
+#         experimental_config=torch.profiler._ExperimentalConfig(
+#             profiler_metrics=[
+#                 # Metrics can be picked from
+#                 # https://docs.nvidia.com/cupti/r_main.html#r_profiler
+#                 # or use kineto__tensor_core_insts, kineto__cuda_core_flops
+#                 "kineto__tensor_core_insts",
+#                 "dram__bytes_read.sum",
+#                 "dram__bytes_write.sum",
+#             ],
+#             profiler_measure_per_kernel=False,
+#         ),
+#     ) as prof:
+#         for sample, cache in itertools.product(do_sample, use_cache):
+#             infer(cache, sample)
+
+#         torch.cuda.synchronize()
+
+#     prof.export_chrome_trace("cupti.json.gz")
+
+    
 if args.pytorch_profiler:
     assert args.ncu_profiler is False, "Don't use NCU and pytorch at the same time"
     # et = ExecutionTraceObserver()
     # et.register_callback("pytorch_et.json")
 
-    with profile(
-        activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-        # schedule = tracing_schedule,
+    with torch.profiler.profile(
+        activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
         on_trace_ready=lambda x: x.export_chrome_trace("kineto_trace.json"),
-        # profile_memory=True,
-        record_shapes=True,
         with_stack=args.with_stack,
+        # schedule = tracing_schedule,
+        # profile_memory=True,
+        # record_shapes=True,
         # execution_trace_observer=et,
     ) as prof:
         for sample, cache in itertools.product(do_sample, use_cache):

@@ -255,10 +255,10 @@ def generate(
 
     eos_reached: bool = False
 
-    use_ncu = ncu_profiler_token is not None
     for i in range(max_new_tokens):
+        use_ncu = (ncu_profiler_token is not None) and (i == ncu_profiler_token)
         with record_function(f"Token{i}"):
-            if use_ncu and i == ncu_profiler_token-1:
+            if use_ncu:
                 torch.cuda.profiler.start()
             input_ids = next_input[:, -max_seq_len:]
 
@@ -327,7 +327,7 @@ def generate(
             else:
                 next_input = result
 
-            if use_ncu and i == ncu_profiler_token-1:
+            if use_ncu:
                 torch.cuda.profiler.stop()
 
             if timing == "per-token":

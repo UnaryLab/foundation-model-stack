@@ -1,0 +1,6 @@
+data/decode_tok30/ai.csv filter=lfs diff=lfs merge=lfs -text
+data/decode_tok30/ai.pkl filter=lfs diff=lfs merge=lfs -text
+data/decode_tok30/kineto_trace.json filter=lfs diff=lfs merge=lfs -text
+data/prefill/ai.csv filter=lfs diff=lfs merge=lfs -text
+data/prefill/ai.pkl filter=lfs diff=lfs merge=lfs -text
+data/prefill/kineto_trace.json filter=lfs diff=lfs merge=lfs -text

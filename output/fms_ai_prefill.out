@@ -1,0 +1,32 @@
+Largest Tensor Arithmetic Intensity
+  operator-name      median         min         max
+0       attn_op  863.366077  850.913058  867.647239
+1   attn_qkv_ip  838.027745  825.875431  847.509060
+2            lp  824.372170  824.372170  824.372170
+3        ff_gup  813.755297  809.844761  818.112565
+4         ff_dp  565.788018  518.040803  615.142713
+5     attn_sdpa  204.411935  204.256765  204.482190
+Largest Tensor FLOPs
+  operator-name        median           min           max
+0            lp  3.476991e+13  3.476991e+13  3.476991e+13
+1        ff_gup  7.756711e+12  7.756711e+12  7.756711e+12
+2         ff_dp  3.878355e+12  3.878355e+12  3.878355e+12
+3   attn_qkv_ip  1.675037e+12  1.675037e+12  1.675037e+12
+4       attn_op  1.116691e+12  1.116691e+12  1.116691e+12
+5     attn_sdpa  2.254858e+11  2.254858e+11  2.254858e+11
+Largest HBM Bytes
+  operator-name        median           min           max
+0            lp  4.217744e+10  4.217744e+10  4.217744e+10
+1        ff_gup  9.531994e+09  9.481227e+09  9.578022e+09
+2         ff_dp  6.854822e+09  6.304806e+09  7.486583e+09
+3   attn_qkv_ip  1.998785e+09  1.976424e+09  2.028196e+09
+4       attn_op  1.293416e+09  1.287034e+09  1.312345e+09
+5     attn_sdpa  1.103095e+09  1.102716e+09  1.103933e+09
+Kernels
+  operator-name  median  min  max
+0     attn_sdpa     3.0    3    3
+1       attn_op     2.0    2    2
+2   attn_qkv_ip     2.0    2    2
+3         ff_dp     2.0    2    2
+4        ff_gup     2.0    2    2
+5            lp     2.0    2    2

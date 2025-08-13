@@ -92,13 +92,16 @@ def print_ai(df_filename: str, n: int):
 
     print('-'*50)
 
-    op = 'ff_dp'
-    assert op in df['operator-name'].unique()
+    ops = df.loc[nonzero, 'operator-name'].unique()
 
-    mask = (df['operator-name'] == op) & (df[hbm_bytes.name] > 0)
-    print(df.loc[mask, ['token', 'layer', hbm_bytes.name]])
+    for op in ops:
+        op_mask = df['operator-name'] == op
+        print(f'{op} HBM Bytes (GB)')
+        df.loc[nonzero & op_mask, hbm_bytes.name] /= 1e9
+        print(df[nonzero & op_mask].groupby(['token'])[hbm_bytes.name].agg(
+            ('median', 'min', 'max', 'var')))
 
-    print('-'*50)
+        print('-'*50)
 
 
 def main(df_filename: str, n: int = 10):

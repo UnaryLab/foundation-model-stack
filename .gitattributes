@@ -4,3 +4,4 @@ data/decode_tok30/kineto_trace.json filter=lfs diff=lfs merge=lfs -text
 data/prefill/ai.csv filter=lfs diff=lfs merge=lfs -text
 data/prefill/ai.pkl filter=lfs diff=lfs merge=lfs -text
 data/prefill/kineto_trace.json filter=lfs diff=lfs merge=lfs -text
+data/g32_b128_p256.pkl filter=lfs diff=lfs merge=lfs -text
